@@ -183,6 +183,7 @@ impl eframe::App for App {
                 }
             });
 
+            ui.separator();
             // 🔹 Ensure "Total Encounters" is always up-to-date
             let total_encounters = {
                 if let Ok(state) = self.encounter_state.try_lock() {
@@ -192,6 +193,17 @@ impl eframe::App for App {
                 }
             };
             ui.label(format!("Total Encounters: {}", total_encounters));
+
+            // 🔹 Get last encounters
+            let last_encounters = {
+                if let Ok(state) = self.encounter_state.try_lock() {
+                    state.last_encounter.clone() // Use the latest value
+                } else {
+                    self.encounter_state.lock().unwrap().last_encounter.clone() // Clone safely even if locked
+                }
+            };
+            let joined_encounters = last_encounters.join(", ");
+            ui.label(format!("Last Encounters: {}", joined_encounters));
 
             // 🔹 Separator for better UI clarity
             ui.separator();

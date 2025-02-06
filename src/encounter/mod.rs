@@ -75,12 +75,14 @@ fn capture_bottom(debug: bool, window: &Window) -> Result<RgbImage, Box<dyn Erro
     let screen_width = window.width();
 
     // Define start and end points for cropping
-    let start_y = (screen_height as f32 * 0.5) as u32; // Start from 50% (middle)
-    let end_y = (screen_height as f32 * 0.8) as u32; // Up to 80% of screen height
+    let start_x = (screen_width as f32 * 0.06) as u32;
+    let end_x = (screen_width as f32 * 0.7) as u32;
+    let start_y = (screen_height as f32 * 0.6) as u32; // Start from 50% (middle)
+    let end_y = (screen_height as f32 * 0.78) as u32; // Up to 80% of screen height
 
     let img = window.capture_image()?;
     let img = DynamicImage::ImageRgba8(img)
-        .crop(0, start_y, screen_width, end_y - start_y) // Capture middle-bottom portion
+        .crop(start_x, start_y, end_x - start_x, end_y - start_y) // Capture middle-bottom portion
         .grayscale()
         .to_rgb8();
 
@@ -93,16 +95,18 @@ fn capture_bottom(debug: bool, window: &Window) -> Result<RgbImage, Box<dyn Erro
 
 
 fn capture_screen(debug: bool, window: &Window) -> Result<RgbImage, Box<dyn Error>> {
-    let factor = if window.height() >= 1080 { 0.4 } else { 0.3 };
+    let screen_height = window.height();
+    let screen_width = window.width();
+
+    // Define start and end points for cropping
+    let start_x = (screen_width as f32 * 0.06) as u32;
+    let end_x = (screen_width as f32 * 0.94) as u32;
+    let start_y = (screen_height as f32 * 0.06) as u32;
+    let end_y = (screen_height as f32 * 0.3) as u32; 
 
     let img = window.capture_image()?;
     let img = DynamicImage::ImageRgba8(img)
-        .crop(
-            0,
-            0,
-            window.width(),
-            (window.height() as f32 * factor) as u32,
-        )
+        .crop(start_x, start_y, end_x - start_x, end_y - start_y) // Capture top portion
         .grayscale()
         .to_rgb8();
 
@@ -114,11 +118,7 @@ fn capture_screen(debug: bool, window: &Window) -> Result<RgbImage, Box<dyn Erro
 }
 
 pub fn get_wild(engine: &OcrEngine, data: RgbImage) -> Result<bool, Box<dyn Error>> {
-    // 🔹 Reduce image size before OCR for speed
-    let small_img = DynamicImage::ImageRgb8(data)
-        .resize_exact(640, 360, image::imageops::FilterType::Triangle)
-        .to_rgb8();
-
+    let small_img = DynamicImage::ImageRgb8(data).to_rgb8();
     let img = ImageSource::from_bytes(small_img.as_raw(), small_img.dimensions())?;
     let ocr_input = engine.prepare_input(img)?;
     let word_rects = engine.detect_words(&ocr_input)?;
@@ -135,11 +135,8 @@ pub fn get_wild(engine: &OcrEngine, data: RgbImage) -> Result<bool, Box<dyn Erro
 }
 
 fn get_mons(engine: &OcrEngine, data: RgbImage) -> Result<Vec<String>, Box<dyn Error>> {
-    // 🔹 Reduce image size before OCR (improves speed)
-    let small_img = DynamicImage::ImageRgb8(data)
-        .resize_exact(640, 360, image::imageops::FilterType::Triangle)
-        .to_rgb8();
 
+    let small_img = DynamicImage::ImageRgb8(data).to_rgb8();
     let img = ImageSource::from_bytes(small_img.as_raw(), small_img.dimensions())?;
     let ocr_input = engine.prepare_input(img)?;
     let word_rects = engine.detect_words(&ocr_input)?;
