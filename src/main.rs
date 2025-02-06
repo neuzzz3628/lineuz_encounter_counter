@@ -167,7 +167,6 @@ impl eframe::App for App {
                     }
                 }
                 
-                
                 if ui.button("Reset (R)").clicked() {
                     if let Ok(mut state) = self.encounter_state.try_lock() {
                         *state = EncounterState::default();
@@ -183,29 +182,21 @@ impl eframe::App for App {
                 }
             });
 
-            ui.separator();
-            // 🔹 Ensure "Total Encounters" is always up-to-date
-            let total_encounters = {
-                if let Ok(state) = self.encounter_state.try_lock() {
-                    state.encounters // Use the latest value
-                } else {
-                    self.encounter_state.lock().unwrap().encounters // Clone safely even if locked
-                }
+            let (total_encounters, last_encounters) = if let Ok(state) = self.encounter_state.try_lock() {
+                // Successfully acquired the lock quickly
+                (state.encounters, state.last_encounter.clone())
+            } else {
+                // Fallback: wait until we can acquire the lock
+                let state = self.encounter_state.lock().unwrap();
+                (state.encounters, state.last_encounter.clone())
             };
+
+            ui.separator();
+
             ui.label(format!("Total Encounters: {}", total_encounters));
 
-            // 🔹 Get last encounters
-            let last_encounters = {
-                if let Ok(state) = self.encounter_state.try_lock() {
-                    state.last_encounter.clone() // Use the latest value
-                } else {
-                    self.encounter_state.lock().unwrap().last_encounter.clone() // Clone safely even if locked
-                }
-            };
-            let joined_encounters = last_encounters.join(", ");
-            ui.label(format!("Last Encounters: {}", joined_encounters));
+            ui.label(format!("Last Encounters: {}", last_encounters.join(", ")));
 
-            // 🔹 Separator for better UI clarity
             ui.separator();
 
             // 🔹 Top 8 Encounters Section
@@ -218,6 +209,7 @@ impl eframe::App for App {
                     ui.label(format!("{}. {} - {}", i + 1, mon, count));
                 }
             }
+
         });
 
         // 🔹 Ensure `start_worker()` restarts if it's stopped but should be running
