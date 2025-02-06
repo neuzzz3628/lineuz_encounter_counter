@@ -25,7 +25,7 @@ Currently worked for Linux only, haven't tested for other systems.
 cargo run --release
 ```
 
-### Recomendation
+> [!NOTE]
 Highly recommended to play PokeMMO that occupies at least 60% of your PC/Laptop screen's width and full height.
 
 ## How build it from source 
