@@ -68,7 +68,7 @@ jobs:
       if: matrix.os != 'windows-latest'
       run: |
         mkdir -p lineuz_counter/
-        cp target/release/lineuz_counter lineuz_counter/
+        cp target/release/lineuz_encounter_counter lineuz_counter/
         cp text-detection.rten lineuz_counter/
         cp text-recognition.rten lineuz_counter/
         zip -r ${{matrix.os}}-${{matrix.arch}}.zip lineuz_counter 
@@ -77,7 +77,7 @@ jobs:
       if: matrix.os == 'windows-latest'
       run: |
         mkdir -p lineuz_counter 
-        cp target/release/lineuz_counter.exe lineuz_counter/ 
+        cp target/release/lineuz_encounter_counter.exe lineuz_counter/ 
         cp text-detection.rten lineuz_counter/
         cp text-recognition.rten lineuz_counter/ 
         Compress-Archive -Path lineuz_counter -DestinationPath ${{ matrix.os }}-${{ matrix.arch }}.zip
