@@ -71,82 +71,85 @@ pub fn save_state(state: &EncounterState) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn capture_bottom(debug: bool, window: &Window) -> Result<RgbImage, Box<dyn Error>> {
+fn capture_crop(
+    debug: bool,
+    window: &Window,
+    start_x_ratio: f32,
+    end_x_ratio: f32,
+    start_y_ratio: f32,
+    end_y_ratio: f32,
+    debug_filename: &str,
+) -> Result<RgbImage, Box<dyn Error>> {
     let screen_height = window.height();
     let screen_width = window.width();
 
-    // Define start and end points for cropping
-    let start_x = (screen_width as f32 * 0.06) as u32;
-    let end_x = (screen_width as f32 * 0.7) as u32;
-    let start_y = (screen_height as f32 * 0.6) as u32; // Start from 50% (middle)
-    let end_y = (screen_height as f32 * 0.78) as u32; // Up to 80% of screen height
+    let start_x = (screen_width as f32 * start_x_ratio) as u32;
+    let end_x = (screen_width as f32 * end_x_ratio) as u32;
+    let start_y = (screen_height as f32 * start_y_ratio) as u32;
+    let end_y = (screen_height as f32 * end_y_ratio) as u32;
 
     let img = window.capture_image()?;
     let img = DynamicImage::ImageRgba8(img)
-        .crop(start_x, start_y, end_x - start_x, end_y - start_y) // Capture middle-bottom portion
+        .crop(start_x, start_y, end_x - start_x, end_y - start_y)
         .grayscale()
         .to_rgb8();
 
     if debug {
-        img.save("debug_bottom.png")?;
+        img.save(debug_filename)?;
     }
-
     Ok(img)
 }
 
+fn capture_bottom(debug: bool, window: &Window) -> Result<RgbImage, Box<dyn Error>> {
+    // Crop parameters: 6% to 70% width and 60% to 78% height
+    capture_crop(debug, window, 0.06, 0.7, 0.6, 0.78, "debug_bottom.png")
+}
 
 fn capture_screen(debug: bool, window: &Window) -> Result<RgbImage, Box<dyn Error>> {
-    let screen_height = window.height();
-    let screen_width = window.width();
-
-    // Define start and end points for cropping
-    let start_x = (screen_width as f32 * 0.06) as u32;
-    let end_x = (screen_width as f32 * 0.94) as u32;
-    let start_y = (screen_height as f32 * 0.06) as u32;
-    let end_y = (screen_height as f32 * 0.3) as u32; 
-
-    let img = window.capture_image()?;
-    let img = DynamicImage::ImageRgba8(img)
-        .crop(start_x, start_y, end_x - start_x, end_y - start_y) // Capture top portion
-        .grayscale()
-        .to_rgb8();
-
-    if debug {
-        img.save("debug.png")?;
-    }
-
-    Ok(img)
+    // Crop parameters: 6% to 94% width and 6% to 30% height
+    capture_crop(debug, window, 0.06, 0.94, 0.06, 0.3, "debug.png")
 }
 
-pub fn get_wild(engine: &OcrEngine, data: RgbImage) -> Result<bool, Box<dyn Error>> {
+fn perform_ocr_lines(
+    engine: &OcrEngine,
+    data: RgbImage,
+) -> Result<Vec<Vec<String>>, Box<dyn Error>> {
     let small_img = DynamicImage::ImageRgb8(data).to_rgb8();
     let img = ImageSource::from_bytes(small_img.as_raw(), small_img.dimensions())?;
     let ocr_input = engine.prepare_input(img)?;
     let word_rects = engine.detect_words(&ocr_input)?;
     let line_rects = engine.find_text_lines(&ocr_input, &word_rects);
     let line_texts = engine.recognize_text(&ocr_input, &line_rects)?;
+    // Convert Vec<Option<TextLine>> into Vec<Vec<String>>
+    let converted: Vec<Vec<String>> = line_texts
+        .into_iter()
+        .map(|opt_line| {
+            if let Some(line) = opt_line {
+                vec![line.to_string()]
+            } else {
+                vec![]
+            }
+        })
+        .collect();
+    Ok(converted)
+}
 
-    // 🔹 Parallel iteration for faster processing
+pub fn get_wild(engine: &OcrEngine, data: RgbImage) -> Result<bool, Box<dyn Error>> {
+    let line_texts = perform_ocr_lines(engine, data)?;
+    // Parallel iteration for faster processing
     let contains_wild = line_texts
-        .par_iter() // Parallel iteration for speed
+        .par_iter()
         .flatten()
-        .map(|line| line.to_string().to_lowercase()) // Convert to lowercase
-        .any(|line| line.contains("a wild")); // Check for "a wild"
+        .map(|line| line.to_string().to_lowercase())
+        .any(|line| line.contains("a wild"));
     Ok(contains_wild)
 }
 
 fn get_mons(engine: &OcrEngine, data: RgbImage) -> Result<Vec<String>, Box<dyn Error>> {
-
-    let small_img = DynamicImage::ImageRgb8(data).to_rgb8();
-    let img = ImageSource::from_bytes(small_img.as_raw(), small_img.dimensions())?;
-    let ocr_input = engine.prepare_input(img)?;
-    let word_rects = engine.detect_words(&ocr_input)?;
-    let line_rects = engine.find_text_lines(&ocr_input, &word_rects);
-    let line_texts = engine.recognize_text(&ocr_input, &line_rects)?;
-
-    // 🔹 Use parallel iterator to process text lines faster
+    let line_texts = perform_ocr_lines(engine, data)?;
+    // Parallel iterator to process text lines faster
     let mons: Vec<String> = line_texts
-        .par_iter() // Parallel iteration
+        .par_iter()
         .flatten()
         .map(|l| l.to_string().to_lowercase())
         .filter(|line| line.contains("lv.") || line.contains("nv.") || line.contains("niv."))
@@ -161,9 +164,9 @@ fn get_mons(engine: &OcrEngine, data: RgbImage) -> Result<Vec<String>, Box<dyn E
                         None
                     }
                 })
-                .collect::<Vec<String>>() // Collect each filtered window into Vec<String>
+                .collect::<Vec<String>>()
         })
-        .collect(); // Collect all results into `mons`
+        .collect();
     Ok(mons)
 }
 
