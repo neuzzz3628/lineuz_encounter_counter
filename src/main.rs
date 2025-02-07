@@ -4,14 +4,14 @@ extern crate rten_imageio;
 extern crate rten_tensor;
 
 mod encounter;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering; // Fix: Import Ordering
+use std::sync::{Arc, Mutex};
 use std::thread;
-
+use std::sync::mpsc;
 use eframe::egui;
 use encounter::{
-    encounter_process, get_current_working_dir, load_state, save_state, EncounterState,
-    APP_STATE, STATE_IDLE, STATE_ONGOING, STATE_PAUSE, STATE_QUITTING, APP_NAME,
+    encounter_process, get_current_working_dir, load_state, save_state, EncounterState, APP_NAME,
+    APP_STATE, STATE_IDLE, STATE_ONGOING, STATE_PAUSE, STATE_QUITTING,
 };
 use std::{env, error::Error, fs};
 use xcap::Window;
@@ -78,26 +78,36 @@ pub struct App {
     pub encounter_state: Arc<Mutex<EncounterState>>,
     engine: Arc<ocrs::OcrEngine>,
     worker_thread: Option<thread::JoinHandle<()>>,
+    worker_rx: Option<std::sync::mpsc::Receiver<EncounterState>>, // ✅ Add the receiver
+    last_rendered_state: EncounterState, // ✅ Cache the last known state
 }
+
 
 impl App {
     fn new() -> Self {
         let engine = Arc::new(init_engine().unwrap());
         let encounter_state = Arc::new(Mutex::new(load_state().unwrap_or_default()));
-        APP_STATE.store(STATE_IDLE, Ordering::SeqCst); // Initialize the global state
-
+        let last_rendered_state = encounter_state.lock().unwrap().clone(); // ✅ Proper initialization
+    
+        APP_STATE.store(STATE_IDLE, Ordering::SeqCst);
+    
         Self {
             encounter_state,
             engine,
             worker_thread: None,
+            worker_rx: None,
+            last_rendered_state, // ✅ Use self.last_rendered_state correctly
         }
     }
+    
 
-    fn start_worker(&mut self, ctx: &egui::Context) {
+    fn start_worker(&mut self) {
         if self.worker_thread.is_none() {
             let encounter_state = Arc::clone(&self.encounter_state);
             let engine = Arc::clone(&self.engine);
-            let ctx = ctx.clone(); // 🔹 Clone `ctx` for use in the worker thread
+            let (tx, rx) = mpsc::channel(); // 🔹 Create message channel
+
+            self.worker_rx = Some(rx);
     
             self.worker_thread = Some(std::thread::spawn(move || {
                 while APP_STATE.load(Ordering::SeqCst) == STATE_ONGOING {
@@ -105,18 +115,13 @@ impl App {
                         .ok()
                         .and_then(|w| w.into_iter().find(|w| encounter::game_exist(w)))
                     {
-    
-                        if let Ok(mut state) = encounter_state.try_lock() {
-                            if let Ok(Some(true)) = encounter_process(&engine, &mut state, &window) {
-                                println!("[DEBUG] Encounter detected, requesting repaint!");
-                                ctx.request_repaint(); // ✅ Correctly use `ctx` to trigger UI update
+                        if let Ok(mut state) = encounter_state.lock() {
+                            if let Ok(Some(true)) = encounter_process(&engine, &mut state, &window, &tx) {
+                                let _ = tx.send(state.clone());
                             }
-                        } else {
-                            println!("[DEBUG] Skipping encounter_process - state locked");
                         }
                     }
-                    // println!("[DEBUG] Thread sleeps.");
-                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    // std::thread::sleep(std::time::Duration::from_millis(10)); // 🔹 Slightly increase delay to reduce CPU usage
                 }
                 println!("[DEBUG] Worker thread exiting.");
             }));
@@ -127,11 +132,22 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // ✅ Non-blocking check for new state updates
+        if let Some(rx) = &self.worker_rx {
+            if let Ok(new_state) = rx.recv_timeout(std::time::Duration::from_millis(5)){
+                if let Ok(mut state) = self.encounter_state.lock() {
+                    if *state != new_state {  // ✅ Only update if state has changed
+                        *state = new_state;
+                        self.last_rendered_state = state.clone(); // ✅ Store cached state
+                        ctx.request_repaint(); // ✅ Repaint only when state changes
+                    }
+                }
+            }
+        }
+    
         egui::CentralPanel::default().show(ctx, |ui| {
-            // 🔹 Title at the top
             ui.heading("Encounter Counter");
-
-            // 🔹 App State Label
+    
             let state_text = match APP_STATE.load(Ordering::SeqCst) {
                 STATE_IDLE => "Idle",
                 STATE_ONGOING => "Ongoing",
@@ -140,85 +156,62 @@ impl eframe::App for App {
                 _ => "Unknown",
             };
             ui.label(format!("App State: {}", state_text));
-
-            // 🔹 Buttons in Horizontal Layout
+    
             ui.horizontal(|ui| {
                 if ui.button("Start (S)").clicked() {
                     APP_STATE.store(STATE_ONGOING, Ordering::SeqCst);
-                
-                    // ✅ Ensure the worker thread is properly restarted
                     if self.worker_thread.is_none() {
-                        self.start_worker(ctx);
+                        self.start_worker();
                     }
                 }
-                
+    
                 if ui.button("Pause (P)").clicked() {
                     APP_STATE.store(STATE_PAUSE, Ordering::SeqCst);
-                
-                    // ✅ Stop worker thread
                     if let Some(handle) = self.worker_thread.take() {
                         let _ = handle.join();
                     }
-                
-                    // ✅ Reset only `in_encounter` while keeping `mon_stats` and `encounters`
-                    if let Ok(mut state) = self.encounter_state.try_lock() {
-                        state.in_encounter = false; // Reset only this flag
-                        save_state(&state).unwrap_or_default(); // Save updated state
-                    }
+                    self.worker_rx = None; // ✅ Reset receiver when pausing
                 }
-                
+    
                 if ui.button("Reset (R)").clicked() {
-                    if let Ok(mut state) = self.encounter_state.try_lock() {
+                    if let Ok(mut state) = self.encounter_state.lock() {
                         *state = EncounterState::default();
                         save_state(&state).unwrap_or_default();
+                        
+                        self.last_rendered_state = state.clone(); // ✅ Ensure UI updates
+                        ctx.request_repaint(); // ✅ Force UI refresh
                     }
                 }
+    
                 if ui.button("Quit (Q)").clicked() {
                     APP_STATE.store(STATE_QUITTING, Ordering::SeqCst);
                     if let Some(handle) = self.worker_thread.take() {
                         let _ = handle.join();
                     }
+                    self.worker_rx = None; // ✅ Reset receiver
                     std::process::exit(0);
                 }
             });
-
-            let (total_encounters, last_encounters) = if let Ok(state) = self.encounter_state.try_lock() {
-                // Successfully acquired the lock quickly
-                (state.encounters, state.last_encounter.clone())
-            } else {
-                // Fallback: wait until we can acquire the lock
-                let state = self.encounter_state.lock().unwrap();
-                (state.encounters, state.last_encounter.clone())
-            };
-
+    
+            // ✅ Read from cached state instead of locking mutex each frame
+            let state = &self.last_rendered_state;
             ui.separator();
-
-            ui.label(format!("Total Encounters: {}", total_encounters));
-
-            ui.label(format!("Last Encounters: {}", last_encounters.join(", ")));
-
+            ui.label(format!("Total Encounters: {}", state.encounters));
+            ui.label(format!("Last Encounters: {}", state.last_encounter.join(", ")));
             ui.separator();
-
-            // 🔹 Top 8 Encounters Section
+    
             ui.heading("Top 8 Encounters");
-            if let Ok(state) = self.encounter_state.try_lock() {
-                let mut top_encounters: Vec<(&String, &u32)> = state.mon_stats.iter().collect();
-                top_encounters.sort_by(|a, b| b.1.cmp(a.1));
-
-                for (i, (mon, count)) in top_encounters.iter().take(8).enumerate() {
-                    ui.label(format!("{}. {} - {}", i + 1, mon, count));
-                }
+            let mut top_encounters: Vec<(&String, &u32)> = state.mon_stats.iter().collect();
+            top_encounters.sort_by(|a, b| b.1.cmp(a.1));
+    
+            for (i, (mon, count)) in top_encounters.iter().take(8).enumerate() {
+                ui.label(format!("{}. {} - {}", i + 1, mon, count));
             }
-
         });
-
-        // 🔹 Ensure `start_worker()` restarts if it's stopped but should be running
-        if APP_STATE.load(Ordering::SeqCst) == STATE_ONGOING && self.worker_thread.is_none() {
-            self.start_worker(ctx);
-        }
     }
+    
+    
 }
-
 
 fn main() -> Result<(), Box<dyn Error>> {
     let is_debug = env::args().find(|arg| arg == "debug");
@@ -238,7 +231,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             viewport: egui::ViewportBuilder::default().with_inner_size([300.0, 350.0]), // Width x Height
             ..Default::default()
         };
-        
+
         eframe::run_native(
             "Encounter Counter",
             native_options,

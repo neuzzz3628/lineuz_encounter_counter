@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::sync::atomic::AtomicU8;
+use std::sync::mpsc;
 use rayon::prelude::*;
 use xcap::Window; // Required for io::Error
 
@@ -21,7 +22,7 @@ pub const STATE_ONGOING: u8 = 1;
 pub const STATE_PAUSE: u8 = 2;
 pub const STATE_QUITTING: u8 = 3;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct EncounterState {
     pub encounters: u32,
     pub last_encounter: Vec<String>,
@@ -170,54 +171,37 @@ pub fn encounter_process(
     engine: &OcrEngine,
     state: &mut EncounterState,
     window: &Window,
+    tx: &mpsc::Sender<EncounterState>, // 🔹 Add a Sender to notify the UI
 ) -> Result<Option<bool>, Box<dyn Error>> {
-    // println!("[DEBUG] Inside encounter_process");
 
-    // 🔹 If not already in an encounter, check for "A wild"
     if !state.in_encounter {
         let cropped_wild = capture_bottom(state.debug, window)?;
         let wilds = get_wild(engine, cropped_wild)?;
-        ("[DEBUG] Detecting wild completed");
         if wilds {
-            println!("[DEBUG] Wild encounter detected! Setting in_encounter = true.");
             state.in_encounter = true; // **Mark the start of an encounter**
             std::thread::sleep(std::time::Duration::from_millis(10)); // Small delay for stability
         }
     }
 
-    // 🔹 If we are in an encounter, check for Pokémon names
     if state.in_encounter {
         let cropped_image = capture_screen(state.debug, window)?;
         let mons = get_mons(engine, cropped_image)?;
 
-        if !mons.is_empty() {
-            // **Only update counter if it hasn't already been updated for this encounter**
-            if state.last_encounter.is_empty() {
-                println!("[DEBUG] Pokémon detected, increasing counter...");
-
+        if !mons.is_empty() && state.last_encounter.is_empty() {
                 state.encounters += mons.len() as u32;
                 state.last_encounter = mons.clone();
                 for mon in mons {
                     *state.mon_stats.entry(mon.clone()).or_insert(0) += 1;
                 }
-
                 save_state(state)?;
-                println!("[DEBUG] Counter increased, state saved.");
-
-                return Ok(Some(true)); // ✅ Trigger UI repaint
-            } else {
-                println!("[DEBUG] Pokémon detected, but counter already updated.");
-            }
+                tx.send(state.clone()).ok(); // ✅ Send updated state to the GUI
+                return Ok(Some(true));
         } else {
-            println!("[DEBUG] No Pokémon detected, checking if encounter should end...");
-            // **Reset `in_encounter` only if Pokémon names have been missing for a while**
             if !state.last_encounter.is_empty() {
-                println!("[DEBUG] Encounter ended. Resetting state.");
                 state.in_encounter = false;
                 state.last_encounter.clear();
             }
         }
     }
-
     Ok(Some(false))
 }
