@@ -1,4 +1,4 @@
-# Lineuz Encounter Counter v0.1.1
+# Lineuz Encounter Counter v0.2.0
 
 ## Description
 Encounter counter for the Pokemmo, Windows - Linux - MacOS (only Linux and Windows are tested)
