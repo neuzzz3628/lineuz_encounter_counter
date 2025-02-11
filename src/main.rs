@@ -4,6 +4,7 @@ use std::{env, error::Error, fs, process, sync::{atomic::{AtomicBool, Ordering},
 // External crate imports.
 use ctrlc;
 use eframe::egui;
+#[cfg(unix)]
 use nix::sys::signal::{signal, SigHandler, Signal};
 use once_cell::sync::Lazy;
 use xcap::Window;
@@ -308,6 +309,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     .expect("Failed to set Ctrl+C handler");
     
     // Handle SIGTERM (Linux/macOS) with graceful shutdown similar to Ctrl+C.
+    #[cfg(unix)]
     unsafe {
         extern "C" fn handle_sigterm(_: i32) {
             eprintln!("Received SIGTERM! Signaling shutdown...");
