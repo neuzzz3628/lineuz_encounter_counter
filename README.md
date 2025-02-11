@@ -1,4 +1,4 @@
-# Lineuz Encounter Counter v0.2.0
+# Lineuz Encounter Counter v0.3.0
 
 ## Description
 Encounter counter for the Pokemmo, Windows - Linux - MacOS (only Linux and Windows are tested)
@@ -57,9 +57,9 @@ cargo run --release
 ## Todo List
 - [x] Replace TUI with GUI
 - [x] GUI operates normally
+- [x] Add most recent encounters
+- [x] Fix button clicks that are a bit slow in responsiveness
 - [ ] Fix issues where it misread name and accept them to the counter
-- [ ] Fix button clicks that are a bit slow in responsiveness
-- [ ] Add most recent encounters
 - [ ] Modify top 8 to include % encounter per total
 - [ ] Grid-based
 - [ ] Add sprites, replacing name to make GUI looks cooler

@@ -864,6 +864,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctrlc"
+version = "3.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90eeab0aa92f3f9b4e87f258c72b139c207d251f9cbc1080a0086b86a8870dd3"
+dependencies = [
+ "nix 0.29.0",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "cursor-icon"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1943,15 +1953,18 @@ dependencies = [
 
 [[package]]
 name = "lineuz_encounter_counter"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
+ "ctrlc",
  "eframe",
  "egui",
  "fastrand",
  "image",
  "lexopt",
+ "nix 0.27.1",
  "ocrs",
+ "once_cell",
  "rayon",
  "regex",
  "repng",
@@ -2154,6 +2167,17 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nix"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
+dependencies = [
+ "bitflags 2.8.0",
+ "cfg-if",
+ "libc",
+]
 
 [[package]]
 name = "nix"
@@ -4513,7 +4537,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "hex",
- "nix",
+ "nix 0.29.0",
  "ordered-stream",
  "rand",
  "serde",

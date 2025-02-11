@@ -1,13 +1,12 @@
 use core::panic;
 use image::{DynamicImage, RgbImage};
 use ocrs::{ImageSource, OcrEngine};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::sync::atomic::AtomicU8;
-use std::sync::mpsc;
-use rayon::prelude::*;
 use xcap::Window; // Required for io::Error
 
 pub const APP_NAME: &str = "pokemmo";
@@ -29,6 +28,8 @@ pub struct EncounterState {
     pub mon_stats: HashMap<String, u32>,
     pub debug: bool,
     pub in_encounter: bool,
+    pub is_not_counted: bool,
+    pub unsaved_encounters: u32, // ✅ Move it inside EncounterState
 }
 
 impl Default for EncounterState {
@@ -39,8 +40,16 @@ impl Default for EncounterState {
             mon_stats: HashMap::new(),
             debug: false,
             in_encounter: false,
+            is_not_counted: true,
+            unsaved_encounters: 0, // ✅ Initialize here
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SavedState {
+    pub state: EncounterState,  // ✅ Store the actual encounter data
+    pub crashed: bool,          // ✅ Track if the last session crashed
 }
 
 pub fn game_exist(w: &Window) -> bool {
@@ -61,15 +70,39 @@ pub fn get_current_working_dir() -> (String, String) {
 
 pub fn load_state() -> Result<EncounterState, Box<dyn Error>> {
     let state_json = fs::read_to_string("state.json")?;
-    let state = serde_json::from_str(&state_json)?;
-    Ok(state)
+
+    // ✅ Try to load as `SavedState`
+    if let Ok(saved_state) = serde_json::from_str::<SavedState>(&state_json) {
+        if saved_state.crashed {
+            eprintln!("[WARNING] Last session did not exit cleanly. Restoring progress...");
+        }
+        return Ok(saved_state.state);
+    }
+
+    // ✅ If parsing as `SavedState` fails, try loading as `EncounterState` (old format)
+    if let Ok(old_state) = serde_json::from_str::<EncounterState>(&state_json) {
+        eprintln!("[WARNING] Detected old state format. Updating to new format...");
+        save_state(&old_state, false)?;  // ✅ Rewrite with new format
+        return Ok(old_state);
+    }
+
+    Err("Failed to parse state.json".into())  // ❌ Return error if both attempts fail
 }
 
-pub fn save_state(state: &EncounterState) -> Result<(), Box<dyn Error>> {
-    let state_json = serde_json::to_string(state)?;
+
+
+
+pub fn save_state(state: &EncounterState, crashed: bool) -> Result<(), Box<dyn Error>> {
+    let saved_state = SavedState {
+        state: state.clone(),
+        crashed,  // ✅ Allow specifying whether it's a crash or normal save
+    };
+
+    let state_json = serde_json::to_string(&saved_state)?;
     fs::write("state.json", state_json)?;
     Ok(())
 }
+
 
 fn capture_crop(
     debug: bool,
@@ -174,15 +207,15 @@ pub fn encounter_process(
     engine: &OcrEngine,
     state: &mut EncounterState,
     window: &Window,
-    tx: &mpsc::Sender<EncounterState>, // 🔹 Add a Sender to notify the UI
-) -> Result<Option<bool>, Box<dyn Error>> {
+) -> Result<bool, Box<dyn Error>> {  // ✅ Change return type to `bool`
+    let mut encounter_detected = false;
 
     if !state.in_encounter {
         let cropped_wild = capture_bottom(state.debug, window)?;
         let wilds = get_wild(engine, cropped_wild)?;
         if wilds {
-            state.in_encounter = true; // **Mark the start of an encounter**
-            std::thread::sleep(std::time::Duration::from_millis(10)); // Small delay for stability
+            state.in_encounter = true;
+            println!("[DEBUG] Wild is detected, flag set to true.");
         }
     }
 
@@ -190,21 +223,31 @@ pub fn encounter_process(
         let cropped_image = capture_screen(state.debug, window)?;
         let mons = get_mons(engine, cropped_image)?;
 
-        if !mons.is_empty() && state.last_encounter.is_empty() {
-                state.encounters += mons.len() as u32;
-                state.last_encounter = mons.clone();
-                for mon in mons {
-                    *state.mon_stats.entry(mon.clone()).or_insert(0) += 1;
-                }
-                save_state(state)?;
-                tx.send(state.clone()).ok(); // ✅ Send updated state to the GUI
-                return Ok(Some(true));
+        if !mons.is_empty() && state.is_not_counted {
+            println!("[DEBUG] Pokemon is detected.");
+            state.encounters += mons.len() as u32;
+            state.last_encounter = mons.clone();
+            state.is_not_counted = false;
+            for mon in mons {
+                *state.mon_stats.entry(mon.clone()).or_insert(0) += 1;
+            }
+
+            state.unsaved_encounters += 1; // ✅ Increment inside EncounterState
+            encounter_detected = true; // ✅ Flag UI update needed
+
+            if state.unsaved_encounters >= 5 {
+                println!("[DEBUG] Saving progress...");
+                save_state(state, false)?; // ✅ Save every 5 encounters
+                state.unsaved_encounters = 0; // ✅ Reset counter after saving
+            }
+            println!("[DEBUG] Counter completed, unsaved_encounters: {}.", state.unsaved_encounters);
         } else {
-            if !state.last_encounter.is_empty() {
+            if !state.is_not_counted {
                 state.in_encounter = false;
-                state.last_encounter.clear();
+                state.is_not_counted = true;
+                println!("[DEBUG] Encounter_process back to default.");
             }
         }
     }
-    Ok(Some(false))
+    Ok(encounter_detected)  // ✅ Return true if an encounter happened
 }
